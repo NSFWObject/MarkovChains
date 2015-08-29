@@ -9,8 +9,6 @@
 import Foundation
 import GameplayKit
 
-typealias ProbableState = (probability: Double, state: GKState)
-typealias LookupElement = (states: [GKState], outcomes: [ProbableState])
 
 class MarkovChainMachine: GKStateMachine {
     let random: GKRandom
@@ -93,11 +91,5 @@ class MarkovChainMachine: GKStateMachine {
         }
         
         return nil
-    }
-}
-
-extension MarkovChainMachine {
-    override var description: String {
-        return mapping.reduce("") { "\($0)\($1)\n" }
     }
 }
