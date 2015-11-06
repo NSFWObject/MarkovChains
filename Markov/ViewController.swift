@@ -16,8 +16,8 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        generateSimpleState()
-//        generateRecipes()
+//        generateSimpleState()
+        generateRecipes()
     }
     
     private func generateSimpleState() {
@@ -51,7 +51,7 @@ class ViewController: UIViewController {
     
     private func generateRecipes() {
         let source = try! String(contentsOfURL: NSBundle.mainBundle().URLForResource("Source", withExtension: "txt")!)
-        let outcomes = MarkovGenerator.processText(source, lookbehind: 2)
+        let outcomes = MarkovGenerator.processText(source, lookbehind: 2,splitBy:.ByCharacters )
         let random = arc4random_uniform(UInt32(outcomes.keys.count))
         let index = outcomes.keys.startIndex.advancedBy(Int(random))
         let initialState = outcomes.keys[index] as! [GKState]
