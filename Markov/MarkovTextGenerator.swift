@@ -9,32 +9,62 @@
 import Foundation
 import GameplayKit
 
-class MarkovGenerator {
 
-    static func processText(text: String, lookbehind: Int = 2) -> [NSArray: [[Double: GKState]]] {
-        let lookup = mapForString(text)
-        let prefixToCounts = prefixToContedSetOfChars(string: text, lookbehind: lookbehind)
-        let result = processPrefixes(prefixToCounts, lookup: lookup)
-        // To avoid problem when end of the text doesn't lead to any other state
-        let end = text.substringFromIndex(text.endIndex.advancedBy(-lookbehind))
-        return result
-    }
+enum Split {
+    case ByWords
+    case ByCharacters
+}
+
+class MarkovGenerator {
     
-    private static func mapForString(string: String) -> [Character: StringState] {
-        var result: [Character: StringState] = [:]
-        for char in Set<Character>(string.characters) {
-            result[char] = .instanceForString(String(char))
+    static func processText(text: String, lookbehind: Int = 2, splitBy: Split) -> [NSArray: [[Double: GKState]]] {
+        var substringsToCountedSets: [NSArray: CountedSet<StringState>] = [:]
+        var buffer: [String] = []
+        var counter = 0
+        
+        func process(substring: String?) {
+            guard let substring = substring else {
+                return
+            }
+            if buffer.count < lookbehind {
+                buffer.append(substring)
+                return
+            }
+            let substringState = StringState.instanceForString(substring)
+            let bufferArray = NSArray(array: buffer.map{ StringState.instanceForString($0) })
+            if let countedSet = substringsToCountedSets[bufferArray] {
+                countedSet.addObject(substringState)
+            } else {
+                substringsToCountedSets[bufferArray] = CountedSet(value: substringState)
+            }
+            
+            buffer.append(substring)
+            if buffer.count > lookbehind {
+                buffer.removeFirst()
+            }
         }
-        return result
-    }
-    
-    private static func processPrefixes(prefixMap: [String: NSCountedSet], lookup: [Character: StringState]) -> [NSArray: [[Double: GKState]]] {
+        
+        switch splitBy {
+          case .ByWords:
+            text.characters.split(" ").forEach{ process(String($0)) }
+          case .ByCharacters:
+            text.characters.forEach{ process(String($0)) }
+        }
+
         var result: [NSArray: [[Double: GKState]]] = [:]
-        for (prefix, outcomes) in prefixMap {
-            let outcomesMap = outcomesToMap(outcomes)
-            let key: NSArray = statesArrayFromString(prefix, lookup: lookup)
-            let value: [[Double: GKState]] = outcomesMap.map{ [$0.keys.first!: lookup[$0.values.first!.characters.first!]!] }
-            result[key] = value
+        counter = 0
+        for (bufferArray, countedSet) in substringsToCountedSets {
+            print("\(counter++) / \(substringsToCountedSets.count)")
+            var probabilities: [[Double: GKState]] = []
+            for obj in countedSet.allObjects {
+                guard let count = countedSet.countForObject(obj) else {
+                    continue
+                }
+                let probability = Double(count) / Double(countedSet.totalCount)
+                assert(probability <= 1)
+                probabilities.append([probability: obj])
+            }
+            result[bufferArray] = probabilities
         }
         return result
     }
@@ -47,6 +77,7 @@ class MarkovGenerator {
         var result: [[Double: String]] = []
         for string in set {
             let probability = round(set.uniformCountForObject(string) * 100) / 100
+            print("p:",probability)
             result.append([probability: string as! String])
         }
         result = result.sort{ $0.0.keys.first! < $0.1.keys.first! }
@@ -66,6 +97,8 @@ class MarkovGenerator {
             let start = string.startIndex.advancedBy(i - lookbehind)
             let end = string.startIndex.advancedBy(i)
             let prefix = string.substringWithRange(Range(start: start, end: end))
+            
+            print("\(i) / \(string.characters.count) \"\(prefix)\"")
             
             let countedSet: NSCountedSet
             if prefixToCounts[prefix] != nil {
@@ -88,15 +121,21 @@ extension NSCountedSet {
     }
 }
 
-class StringState: GKState {
-    private(set) var string: String = ""
-    
+class StringState: GKState, NSCoding {
+    private(set) var string: String = "" {
+        didSet {
+            hashString = string
+        }
+    }
+    private var hashString: String = ""
     static func classNameForString(string: String) -> String {
         return "StringState_\(string)"
     }
     
+    static var classesCount = 0
     static func classForString(string: String) -> AnyClass {
         let name = classNameForString(string)
+        print("name:",name)
         if let cls = objc_lookUpClass(name) {
             return cls
         } else {
@@ -105,7 +144,7 @@ class StringState: GKState {
             return cls
         }
     }
-    
+
     static func instanceForString(string: String) -> StringState {
         let cls: AnyClass = classForString(string)
         let instance = InstantiateClass(cls) as! StringState
@@ -114,6 +153,60 @@ class StringState: GKState {
     }
     
     override var description: String {
-        return "StringState value=\"\(self.string)\""
+        return "StringState_\(self.string)"
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        super.init()
+        if let x = aDecoder.decodeObjectForKey("string") as? String {
+            self.string = x
+        } else {
+            return nil
+        }
+    }
+    
+    override init() {
+        super.init()
+    }
+    
+    func encodeWithCoder(aCoder: NSCoder) {
+        aCoder.encodeObject(string, forKey: "string")
+    }
+    
+    override var hash: Int {
+        return self.hashString.hash
+    }
+    
+    override func isEqual(object: AnyObject?) -> Bool {
+        if let o = object as? StringState {
+            return o.hashString == self.hashString
+        }
+        return super.isEqual(object)
+    }
+}
+
+class CountedSet<T: Hashable> {
+    private(set) var totalCount: Int = 0
+    private var objectToCount: [T: Int] = [:]
+    
+    var allObjects: [T] {
+        return Array(objectToCount.keys)
+    }
+    
+    init(value: T) {
+        addObject(value)
+    }
+    
+    func addObject(value: T) {
+        if let count = objectToCount[value] {
+            objectToCount[value] = count + 1
+        } else {
+            objectToCount[value] = 1
+        }
+        totalCount++
+    }
+    
+    func countForObject(value: T) -> Int? {
+        return objectToCount[value]
     }
 }
